@@ -84,6 +84,8 @@ async function makeReservationAndWait(params) {
             role: 'system',
             content: `You are a polite personal assistant calling a restaurant to make a reservation.
 
+LANGUAGE: Speak Dutch by default. Switch to English only if the restaurant staff speaks English first.
+
 When someone picks up:
 1. Confirm you reached the restaurant
 2. Ask for availability on the requested date/time
@@ -91,7 +93,7 @@ When someone picks up:
 4. Confirm all details back to them
 5. Thank them and end the call
 
-If you reach voicemail, leave a brief message${CALLBACK_NUMBER ? ` with callback number ${CALLBACK_NUMBER}` : ''} and hang up.
+If you reach voicemail, leave a brief message with the reservation request and callback number ${CALLBACK_NUMBER || '+31641783184'} so they can confirm. Then hang up.
 
 RESERVATION DETAILS:
 ${contextLines}`,

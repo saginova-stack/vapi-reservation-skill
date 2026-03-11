@@ -88,8 +88,21 @@ The function returns:
 ```
 
 - If `success: true` → confirm reservation details to user
-- If `success: false` → explain what happened (voicemail, unavailable, no answer) and ask if they want to retry or try a different time
+- If `success: false` → check `endedReason` and follow the table below
 - Always include the transcript summary so user knows exactly what was said
+
+### `endedReason` Handling
+
+| `endedReason` | Action |
+|---|---|
+| `voicemail` | The voicemail message was left with callback +31641783184. Tell user: "Left a voicemail, they should call back Anelya." |
+| `customer-busy` | Tell user the line was busy. Offer to retry in 15 minutes. |
+| `customer-did-not-answer` | Restaurant didn't pick up. Look up their business hours (Google) and suggest calling when they open. |
+| `silence-timed-out` | Call connected but no one spoke. Offer to retry. |
+| `exceeded-max-duration` | Call ran too long (3 min cap). Likely on hold — suggest calling back at a less busy time. |
+| `assistant-ended-call` | The AI agent completed the call normally. Check `success` field. |
+| `customer-ended-call` | Restaurant hung up. Check transcript for context — they may have said they're full. |
+| Other / `unknown-error` | Something went wrong. Show the raw `endedReason` and offer to retry. |
 
 ## Phone Number Routing
 
@@ -104,11 +117,13 @@ The function returns:
 In the [Vapi Dashboard](https://dashboard.vapi.ai), create a new assistant with:
 
 **First Message:**
-> Hi, I'm calling to make a dinner reservation. Am I speaking with the restaurant?
+> Hallo, ik bel om een reservering te maken. Spreek ik met het restaurant?
 
 **System Prompt:**
 ```
 You are a polite personal assistant calling a restaurant to make a reservation.
+
+LANGUAGE: Speak Dutch by default. Switch to English only if the restaurant staff speaks English first.
 
 When someone picks up:
 1. Confirm you reached the restaurant
@@ -117,7 +132,7 @@ When someone picks up:
 4. Confirm all details back to them
 5. Thank them and end the call
 
-If you reach voicemail, leave a brief message with a callback number (if provided) and hang up.
+If you reach voicemail, leave a brief message with the reservation request and callback number +31641783184. Then hang up.
 
 Details will be provided at the start of each call.
 ```
@@ -128,17 +143,76 @@ Details will be provided at the start of each call.
 
 Go to [Vapi Dashboard → API Keys](https://dashboard.vapi.ai) and copy your key.
 
-### 3. (Optional) Import a Phone Number
+### 3. Import Your Telnyx Number into Vapi
 
-For international calls, import a number from Telnyx or Twilio in the Vapi dashboard under Phone Numbers.
+Your Telnyx number (+31251443084) needs to be imported into Vapi so it can make outbound calls to NL restaurants.
+
+**Method A — Direct Import (try this first):**
+
+1. Go to [Vapi Dashboard → Phone Numbers](https://dashboard.vapi.ai)
+2. Click **Create a Phone Number**
+3. Select the **Telnyx** tab
+4. Enter your Telnyx API key and phone number `+31251443084`
+5. Click **Import from Telnyx**
+6. If successful, copy the returned **Phone Number ID** — this is your `VAPI_PHONE_NUMBER_ID`
+
+**Method B — SIP Trunk (if direct import fails with credential errors):**
+
+Some users report 401 errors with direct import. The SIP trunk method is more reliable:
+
+1. **In Telnyx Portal** ([portal.telnyx.com](https://portal.telnyx.com)):
+   - Go to **Voice → SIP Trunking** → Create a new SIP Trunk
+   - Set FQDN to `sip.vapi.ai`, port `5060`
+   - Under **Numbers**, assign `+31251443084` to this trunk
+   - Go to **Outbound Voice Profiles** → create/select a profile → add Vapi as a connection
+   - Under **Authentication**, create SIP credentials (username + password) — save these
+
+2. **Create a Vapi credential** (via API):
+   ```bash
+   curl -X POST https://api.vapi.ai/credential \
+     -H "Content-Type: application/json" \
+     -H "Authorization: Bearer $VAPI_API_KEY" \
+     -d '{
+       "provider": "byo-sip-trunk",
+       "name": "telnyx-nl",
+       "sipTrunkConfig": {
+         "uri": "sip.telnyx.com",
+         "authenticationPlan": {
+           "type": "sip-authentication",
+           "sipUsername": "YOUR_SIP_USERNAME",
+           "sipPassword": "YOUR_SIP_PASSWORD"
+         }
+       }
+     }'
+   ```
+   Save the returned credential `id`.
+
+3. **Register the phone number in Vapi** (via API):
+   ```bash
+   curl -X POST https://api.vapi.ai/phone-number \
+     -H "Content-Type: application/json" \
+     -H "Authorization: Bearer $VAPI_API_KEY" \
+     -d '{
+       "provider": "byo-phone-number",
+       "number": "+31251443084",
+       "credentialId": "YOUR_CREDENTIAL_ID"
+     }'
+   ```
+   The returned `id` is your `VAPI_PHONE_NUMBER_ID`.
+
+4. **Set the env var:**
+   ```
+   VAPI_PHONE_NUMBER_ID=<the id from step 3>
+   ```
 
 ## Gotchas
 
 - Restaurant phone must be in international format (e.g. `+31` for Netherlands, `+1` for US)
 - Call polling waits up to 3 minutes — don't timeout early
-- If the restaurant doesn't answer, Vapi will leave a voicemail — report this back to user
-- The free Vapi number cannot make international calls
-- The assistant speaks English by default — configure your Vapi assistant for other languages if needed
+- The free Vapi number cannot make international calls — you must use Method A or B above
+- The assistant speaks Dutch by default and switches to English if the restaurant speaks English first
+- Vapi's voicemail detection works best with `voicemailDetectionEnabled: true` on the assistant
+- Note: some users report audio quality issues with direct Telnyx import — SIP trunk method (Method B) generally has better quality
 
 ## Files
 
